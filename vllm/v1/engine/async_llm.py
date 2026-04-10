@@ -6,7 +6,7 @@ import socket
 import time
 import warnings
 from collections.abc import AsyncGenerator, Iterable, Mapping
-from copy import copy
+from copy import copy, deepcopy
 from typing import Any
 
 import torch
@@ -461,10 +461,15 @@ class AsyncLLM(EngineClient):
                         self._validate_streaming_input_sampling_params(sp)
                     else:
                         sp = sampling_params
+                    sp_temp = deepcopy(sp)
+                    if input_chunk.prompt['has_text']:
+                        sp_temp.max_tokens = sp.max_tokens
+                    else:
+                        sp_temp.max_tokens = 1
                     req = self.input_processor.process_inputs(
                         request_id=internal_req_id,
                         prompt=input_chunk.prompt,
-                        params=sp,
+                        params=sp_temp,
                         resumable=True,
                         **inputs,  # type: ignore[arg-type]
                     )
@@ -489,7 +494,7 @@ class AsyncLLM(EngineClient):
                     await self._add_request(final_req, None, None, 0, queue)
 
         # Ensure output handler is running.
-        self._run_output_handler()
+        self._run_output_handler() 
 
         queue._input_stream_task = asyncio.create_task(handle_inputs())
         return queue
