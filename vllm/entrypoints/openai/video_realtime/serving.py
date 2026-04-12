@@ -93,7 +93,7 @@ class OpenAIServingRealtimeVideo(OpenAIServing):
                 "width": width,
                 "height": height,
             }
-            if VIDEO_PLACEHOLDER in current_prompt:
+            if VIDEO_PLACEHOLDER not in current_prompt:
                 user_content = current_prompt + " " + VIDEO_PLACEHOLDER
             else:
                 user_content = current_prompt
