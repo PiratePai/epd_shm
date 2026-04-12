@@ -33,19 +33,36 @@ class GenerationTrigger(OpenAIBaseModel):
     type: Literal["generation.trigger"] = "generation.trigger"
     prompt: str | None = None  # Custom prompt to trigger generation
 
+class InputVideoBufferWaterlevel(OpenAIBaseModel):
+    """Server buffer water level so client can wait for capacity before sending."""
+
+    queue_depth: int = 0
+    """Number of batches in the server queue. Client should send when queue_depth < max_queue_size."""
+    max_queue_size: int = 1
+
+    buffer_frames: int = 0
+
+class SessionUpdate(OpenAIBaseModel):
+    """Configure session parameters"""
+
+    type: Literal["session.update"] = "session.update"
+    model: str | None = None
+
+
 class SessionCreated(OpenAIBaseModel):
     """Connection established notification"""
 
     type: Literal["session.created"] = "session.created"
     id: str = Field(default_factory=lambda: f"sess-{random_uuid()}")
     created: int = Field(default_factory=lambda: int(time.time()))
+    input_video_buffer: InputVideoBufferWaterlevel | None = None
 
 
 class CompletionDelta(OpenAIBaseModel):
     """Incremental completion text"""
 
     type: Literal["completion.delta"] = "completion.delta"
-    delta: str  
+    delta: str
 
 
 class CompletionDone(OpenAIBaseModel):

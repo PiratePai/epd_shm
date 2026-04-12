@@ -7,6 +7,7 @@ import asyncio
 import base64
 import io
 import json
+from http import HTTPStatus
 from uuid import uuid4
 
 from fastapi import WebSocket
@@ -20,7 +21,7 @@ except ImportError:
         """Placeholder when uvicorn not available."""
         pass
 
-from vllm.entrypoints.openai.engine.protocol import UsageInfo
+from vllm.entrypoints.openai.engine.protocol import ErrorResponse, UsageInfo
 from vllm.entrypoints.openai.video_realtime.protocol import (
     CompletionDelta,
     CompletionDone,
@@ -66,6 +67,7 @@ def _decode_video_frame(payload_b64: str, fmt: str | None):
 class RealtimeVideoConnection:
     """Manages WebSocket lifecycle for realtime video understanding.
 
+    - Session: session.update (model, optional prompt)
     - Append: input_video_buffer.append (base64 frame, one per message)
     - Commit: input_video_buffer.commit (process buffer as one batch, optional final)
       - With frames: process video + prompt. With no frames: text-only turn (prompt only).
@@ -97,6 +99,7 @@ class RealtimeVideoConnection:
         self.generation_task: asyncio.Task | None = None
         self._is_connected = False
         self._is_input_finished = False
+        self._is_model_validated = False
         self._prompt_text = DEFAULT_VIDEO_PROMPT
         self._max_frames_per_commit = max_frames_per_commit
         self._prompt_consume_next = False
@@ -128,10 +131,26 @@ class RealtimeVideoConnection:
         finally:
             await self._cleanup()
 
+    def _check_model(self, model: str | None) -> ErrorResponse | None:
+        if self.serving._is_model_supported(model):
+            return None
+        return self.serving.create_error_response(
+            message=f"The model `{model}` does not exist.",
+            err_type="NotFoundError",
+            status_code=HTTPStatus.NOT_FOUND,
+            param="model",
+        )
+
     async def _handle_event(self, event: dict):
         """Route events to handlers."""
         event_type = event.get("type")
-        if event_type == "input_video_buffer.append":
+        if event_type == "session.update":
+            logger.debug("Session updated: %s", event)
+            self._check_model(event.get("model"))
+            self._is_model_validated = True
+            if "prompt" in event and event["prompt"]:
+                self._prompt_text = event["prompt"]
+        elif event_type == "input_video_buffer.append":
             append_evt = InputVideoBufferAppend(**event)
             try:
                 frame = _decode_video_frame(append_evt.video, append_evt.format)
@@ -145,6 +164,12 @@ class RealtimeVideoConnection:
                 logger.error("Failed to decode video frame: %s", e)
                 await self._send_error("Invalid video data", "invalid_video")
         elif event_type == "input_video_buffer.commit":
+            if not self._is_model_validated:
+                await self._send_error(
+                    "Model not validated. Send session.update with model first.",
+                    "model_not_validated",
+                )
+                return
             commit_evt = InputVideoBufferCommit(**event)
             # Enqueue one batch: current buffer as list of frames, 
             # or empty list for text-only turn.
